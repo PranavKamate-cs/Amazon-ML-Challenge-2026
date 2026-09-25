@@ -1,0 +1,36 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Data files & Large TSVs
+*.tsv
+*.zip
+*.tar.gz
+*.csv
+!submissions/submission_log.csv
+
+# Dataset directories
+dataset/
+student_resource/dataset/
+output/
+
+# AWS & Security Credentials
+*.pem
+*.key
+*.ppk
+credentials.json
+.env
+
+# Model Checkpoints & Large Artifacts
+models/
+*.bin
+*.pt
+*.pth
+*.onnx
+
+# OS & IDE metadata
+.DS_Store
+.vscode/
+.idea/
+*.log

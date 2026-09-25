@@ -1,0 +1,2 @@
+sub_id,timestamp,model_description,cv_scheme,local_cv_score,public_lb_score,notes
+sub_000,2026-09-25 00:00:00,Template Example,5-Fold Stratified,0.0000,-,Initial submission log template
