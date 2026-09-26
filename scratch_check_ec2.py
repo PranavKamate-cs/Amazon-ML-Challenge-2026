@@ -3,7 +3,7 @@ import sys
 
 def run(cmd):
     key_path = r'C:\Users\Pranav\Downloads\ml-challenge-key.pem'
-    ip = '3.88.2.66'
+    ip = '98.80.119.134'
     
     client = paramiko.SSHClient()
     client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
