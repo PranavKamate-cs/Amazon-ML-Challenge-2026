@@ -9,12 +9,26 @@ import sys
 import time
 import argparse
 import re
-from typing import Set, List, Dict
+from typing import Set, List, Dict, Tuple
 
 import pandas as pd
 import numpy as np
 
 from src.preprocessing import clean_name, clean_address, extract_numbers
+
+
+LEGAL_SUFFIXES_REGEX = re.compile(
+    r'\b(pvt ltd|private limited|ltd|llc|inc|incorporated|corp|corporation|co|company|sarl|sa|gmbh|enterprises|enterprise|services|service|store|stores|trading|agency|holdings|group)\b',
+    re.IGNORECASE
+)
+
+
+def extract_brand_root(name: str) -> str:
+    """Extract clean brand root by stripping common legal suffixes."""
+    if not name or not isinstance(name, str):
+        return ""
+    root = LEGAL_SUFFIXES_REGEX.sub('', name).strip()
+    return " ".join(root.split())
 
 
 def extract_postal_codes(address: str) -> str:
@@ -47,8 +61,9 @@ def preprocess_dataframe(df: pd.DataFrame) -> pd.DataFrame:
     df['c_name'] = df['business_name'].astype(str).apply(clean_name)
     df['c_addr'] = df['business_address'].astype(str).apply(clean_address)
     
-    # 2. Pre-extracted indexing fields
-    print("  -> Extracting compact names, numbers, and postals...")
+    # 2. Pre-extracted indexing fields & Brand Roots
+    print("  -> Extracting brand roots, compact names, numbers, and postals...")
+    df['brand_root'] = df['c_name'].apply(extract_brand_root)
     df['comp_name'] = df['c_name'].apply(clean_compact_name)
     df['postals'] = df['c_addr'].apply(extract_postal_codes)
     df['numbers'] = df['c_addr'].apply(extract_numbers_str)
