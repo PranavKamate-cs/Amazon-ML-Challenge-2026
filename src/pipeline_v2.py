@@ -258,31 +258,72 @@ class MemorySafeResolver:
             all_candidates_idx = set()
             
             # --- TIER 1: FAST-PATH EXACT & COMPACT HASH ---
+            tier1_candidates = []
+            
             if s1_name in self.exact_name_map:
-                for idx in self.exact_name_map[s1_name]:
+                exact_hits = self.exact_name_map[s1_name]
+                # If unique name (<=3 hits) or verified chain location
+                is_unique = len(exact_hits) <= 3
+                for idx in exact_hits:
+                    eid, cname, caddr, ccomp, cnums, cpostals = self.target_data[idx]
                     all_candidates_idx.add(idx)
-                    tier1_matches.add(idx)
                     
-            if s1_comp and len(s1_comp) >= 4 and s1_comp in self.compact_name_map:
-                for idx in self.compact_name_map[s1_comp]:
+                    if is_unique:
+                        # For unique names, only reject if postal/num explicitly conflict
+                        if s1_postals and cpostals and len(s1_postals.intersection(cpostals)) == 0:
+                            continue
+                        if s1_nums and cnums and len(s1_nums.intersection(cnums)) == 0 and fuzz.ratio(s1_addr, caddr) < 70:
+                            continue
+                        tier1_candidates.append((idx, eid, 1.0))
+                    else:
+                        # For common names / chains: Address matching is MANDATORY
+                        if s1_postals and cpostals and len(s1_postals.intersection(cpostals)) > 0:
+                            tier1_candidates.append((idx, eid, 0.95))
+                        elif s1_nums and cnums and len(s1_nums.intersection(cnums)) > 0 and fuzz.token_set_ratio(s1_addr, caddr) >= 60:
+                            tier1_candidates.append((idx, eid, 0.90))
+                        elif fuzz.token_set_ratio(s1_addr, caddr) >= 75:
+                            tier1_candidates.append((idx, eid, 0.85))
+                            
+            if s1_comp and len(s1_comp) >= 5 and s1_comp in self.compact_name_map:
+                comp_hits = self.compact_name_map[s1_comp]
+                is_comp_unique = len(comp_hits) <= 3
+                for idx in comp_hits:
+                    if idx in all_candidates_idx:
+                        continue
+                    eid, cname, caddr, ccomp, cnums, cpostals = self.target_data[idx]
                     all_candidates_idx.add(idx)
-                    tier1_matches.add(idx)
+                    
+                    if is_comp_unique:
+                        if s1_postals and cpostals and len(s1_postals.intersection(cpostals)) == 0:
+                            continue
+                        if s1_nums and cnums and len(s1_nums.intersection(cnums)) == 0 and fuzz.ratio(s1_addr, caddr) < 70:
+                            continue
+                        tier1_candidates.append((idx, eid, 0.98))
+                    else:
+                        if s1_postals and cpostals and len(s1_postals.intersection(cpostals)) > 0:
+                            tier1_candidates.append((idx, eid, 0.92))
+                        elif s1_nums and cnums and len(s1_nums.intersection(cnums)) > 0 and fuzz.token_set_ratio(s1_addr, caddr) >= 60:
+                            tier1_candidates.append((idx, eid, 0.88))
+                        elif fuzz.token_set_ratio(s1_addr, caddr) >= 75:
+                            tier1_candidates.append((idx, eid, 0.82))
 
             # FAST-PATH: If high-confidence matches found, resolve immediately!
-            if tier1_matches:
-                valid_tier1 = []
-                cand_ids = []
-                for idx in all_candidates_idx:
-                    eid, cname, caddr, ccomp, cnums, cpostals = self.target_data[idx]
-                    cand_ids.append(eid)
-                    # Negative guards
-                    if s1_postals and cpostals and len(s1_postals.intersection(cpostals)) == 0 and s1_name != cname:
-                        continue
-                    if s1_nums and cnums and len(s1_nums.intersection(cnums)) == 0 and s1_name != cname and fuzz.ratio(s1_name, cname) < 95:
-                        continue
-                    valid_tier1.append(eid)
-                    
-                matching_out.append((s1_id, ",".join(valid_tier1)))
+            if tier1_candidates:
+                # Rank and cap matches (max 3 from S2, max 3 from S3)
+                s2_matches = []
+                s3_matches = []
+                tier1_candidates.sort(key=lambda x: x[2], reverse=True)
+                
+                for _, eid, _ in tier1_candidates:
+                    if eid.startswith('S2-') and len(s2_matches) < 5:
+                        s2_matches.append(eid)
+                    elif eid.startswith('S3-') and len(s3_matches) < 6:
+                        s3_matches.append(eid)
+                        
+                final_matches = s2_matches + s3_matches
+                cand_ids = [self.target_data[idx][0] for idx in list(all_candidates_idx)[:25]]
+                
+                matching_out.append((s1_id, ",".join(final_matches)))
                 candidate_out.append((s1_id, ",".join(cand_ids)))
                 continue
 
@@ -322,7 +363,7 @@ class MemorySafeResolver:
 
             # Queue fuzzy candidates for vectorized GBDT scoring
             curr_cand_ids = []
-            for idx in all_candidates_idx:
+            for idx in list(all_candidates_idx)[:top_k]:
                 eid, cname, caddr, ccomp, cnums, cpostals = self.target_data[idx]
                 curr_cand_ids.append(eid)
                 fuzzy_feat_matrix.append(extract_features_v2(s1_name, s1_addr, cname, caddr, eid))
@@ -334,21 +375,35 @@ class MemorySafeResolver:
         # Vectorized batch prediction with GBDT
         if fuzzy_feat_matrix:
             probs = model.predict(np.array(fuzzy_feat_matrix, dtype=np.float32))
-            fuzzy_matches = defaultdict(list)
+            fuzzy_scored_matches = defaultdict(list)
             
             for (f_idx, target_idx, s1_id, cand_eid), prob in zip(fuzzy_cand_tuples, probs):
                 if prob >= threshold:
                     eid, cname, caddr, ccomp, cnums, cpostals = self.target_data[target_idx]
                     s1_id, s1_name, s1_addr, s1_nums, s1_postals = fuzzy_s1_records[f_idx]
-                    # Negative guards
+                    
+                    # Negative guards against false positive cross-merges
                     if s1_postals and cpostals and len(s1_postals.intersection(cpostals)) == 0 and fuzz.ratio(s1_name, cname) < 90:
                         continue
                     if s1_nums and cnums and len(s1_nums.intersection(cnums)) == 0 and fuzz.ratio(s1_name, cname) < 85:
                         continue
-                    fuzzy_matches[s1_id].append(cand_eid)
+                        
+                    fuzzy_scored_matches[s1_id].append((cand_eid, prob))
                     
             for f_idx, (s1_id, s1_name, s1_addr, _, _) in enumerate(fuzzy_s1_records):
-                matching_out.append((s1_id, ",".join(fuzzy_matches.get(s1_id, []))))
+                cand_list = fuzzy_scored_matches.get(s1_id, [])
+                cand_list.sort(key=lambda x: x[1], reverse=True)
+                
+                s2_matches = []
+                s3_matches = []
+                for ceid, _ in cand_list:
+                    if ceid.startswith('S2-') and len(s2_matches) < 5:
+                        s2_matches.append(ceid)
+                    elif ceid.startswith('S3-') and len(s3_matches) < 6:
+                        s3_matches.append(ceid)
+                        
+                final_fuzzy = s2_matches + s3_matches
+                matching_out.append((s1_id, ",".join(final_fuzzy)))
                 candidate_out.append((s1_id, ",".join(fuzzy_all_candidates[f_idx])))
 
         return matching_out, candidate_out
