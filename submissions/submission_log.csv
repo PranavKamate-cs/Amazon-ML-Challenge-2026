@@ -1,2 +1,3 @@
 sub_id,timestamp,model_description,cv_scheme,local_cv_score,public_lb_score,notes
 sub_000,2026-09-25 00:00:00,Template Example,5-Fold Stratified,0.0000,-,Initial submission log template
+sub_001,2026-09-26 06:50:00,LightGBM 17-Feature Classifier + Multi-Channel Blocker (θ=0.65),Group K-Fold by S1,0.8477,-,Baseline Submission #1 | 169129 singletons preserved | Passed official validator
